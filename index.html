@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transit Journey Planner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .spinner { width: 16px; height: 16px; border: 2px solid #c7d2fe; border-top-color: #4f46e5; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; vertical-align: -3px; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .invalid { border-color: #dc2626 !important; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 via-white to-fuchsia-50 min-h-screen text-slate-800">
+  <header class="bg-gradient-to-r from-indigo-700 via-violet-600 to-fuchsia-600 text-white shadow-lg">
+    <div class="max-w-6xl mx-auto px-4 py-4">
+      <h1 class="text-3xl font-extrabold tracking-tight">🚍 Transit Journey Planner</h1>
+      <p class="text-indigo-100 text-sm">Plan direct bus and metro journeys, and find essentials near any place. Powered by OpenStreetMap data.</p>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6 grid gap-6 lg:grid-cols-3">
+    <!-- LEFT COLUMN -->
+    <section class="lg:col-span-1 space-y-4">
+      <div class="flex rounded-lg overflow-hidden border border-indigo-600 text-sm font-semibold" role="tablist">
+        <button id="tabNearby" type="button" class="flex-1 py-2 bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white">Nearby</button>
+        <button id="tabJourney" type="button" class="flex-1 py-2 bg-white text-indigo-700">Journey (transit)</button>
+      </div>
+
+      <!-- Nearby form -->
+      <form id="searchForm" class="bg-white rounded-2xl shadow-lg ring-1 ring-indigo-100 p-4 space-y-3" novalidate>
+        <div>
+          <label for="place" class="block text-sm font-medium">Place or address</label>
+          <input id="place" type="text" placeholder="e.g. MG Road, Bengaluru" autocomplete="off"
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <p id="placeError" class="text-red-600 text-xs mt-1 hidden">Enter at least 3 characters.</p>
+          <button type="button" id="locateBtn" class="text-xs text-indigo-700 underline mt-1">Use my current location</button>
+        </div>
+        <div>
+          <label for="category" class="block text-sm font-medium">What do you need?</label>
+          <select id="category" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"></select>
+        </div>
+        <div>
+          <label for="radius" class="block text-sm font-medium">Radius: <span id="radiusLabel">1000</span> m</label>
+          <input id="radius" type="range" min="250" max="3000" step="250" value="1000" class="w-full" />
+        </div>
+        <label class="flex items-center gap-2 text-sm"><input id="wheelchairOnly" type="checkbox" /> Only wheelchair-accessible (as tagged)</label>
+        <label class="flex items-center gap-2 text-sm"><input id="openInfoOnly" type="checkbox" /> Only places with opening hours listed</label>
+        <button id="searchBtn" type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:from-indigo-700 hover:to-fuchsia-700 disabled:opacity-60 text-white font-semibold rounded-lg py-2">Find nearby</button>
+      </form>
+
+      <!-- Journey form -->
+      <form id="journeyForm" class="hidden bg-white rounded-2xl shadow-lg ring-1 ring-indigo-100 p-4 space-y-3" novalidate>
+        <div>
+          <label for="jFrom" class="block text-sm font-medium">From</label>
+          <input id="jFrom" type="text" placeholder="e.g. Majestic, Bengaluru" autocomplete="off"
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <p id="jFromError" class="text-red-600 text-xs mt-1 hidden">Enter a start (3+ characters).</p>
+        </div>
+        <div>
+          <label for="jTo" class="block text-sm font-medium">To</label>
+          <input id="jTo" type="text" placeholder="e.g. Indiranagar, Bengaluru" autocomplete="off"
+            class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <p id="jToError" class="text-red-600 text-xs mt-1 hidden">Enter a destination (3+ characters).</p>
+          <p id="jSameError" class="text-red-600 text-xs mt-1 hidden">Start and destination can't be the same.</p>
+        </div>
+        <div>
+          <label for="jWalk" class="block text-sm font-medium">Max walk to a stop</label>
+          <select id="jWalk" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
+            <option value="400">400 m (~5 min)</option>
+            <option value="600" selected>600 m (~7 min)</option>
+            <option value="800">800 m (~10 min)</option>
+          </select>
+        </div>
+        <button id="journeyBtn" type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:from-indigo-700 hover:to-fuchsia-700 disabled:opacity-60 text-white font-semibold rounded-lg py-2">Find public transport</button>
+        <p class="text-xs text-slate-500">Direct routes only, from OpenStreetMap route data. No timetables or transfers.</p>
+      </form>
+
+      <div id="status" class="text-sm text-slate-600" role="status" aria-live="polite"></div>
+
+      <div class="bg-white rounded-2xl shadow-lg ring-1 ring-indigo-100 p-4">
+        <h2 class="font-semibold mb-2">Saved places</h2>
+        <ul id="savedList" class="space-y-1 text-sm"></ul>
+        <p id="savedEmpty" class="text-xs text-slate-500">Nothing saved yet. Press "Save" on any result.</p>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN -->
+    <section class="lg:col-span-2 space-y-4">
+      <div id="map" class="h-72 sm:h-96 rounded-2xl shadow-lg ring-1 ring-indigo-100 z-0"></div>
+
+      <div id="journeyCard" class="hidden bg-white rounded-2xl shadow-lg ring-1 ring-indigo-100 p-4">
+        <h2 class="font-semibold mb-2">Public transport options <span id="jCount" class="text-slate-500 font-normal"></span></h2>
+        <ul id="jResults" class="divide-y"><li class="py-4 text-sm text-slate-500">Enter a start and destination to see routes.</li></ul>
+      </div>
+
+      <div id="nearbyCard" class="bg-white rounded-2xl shadow-lg ring-1 ring-indigo-100 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold">Results <span id="count" class="text-slate-500 font-normal"></span></h2>
+          <select id="sortBy" class="text-sm border rounded px-2 py-1">
+            <option value="distance">Nearest first</option>
+            <option value="name">Name A–Z</option>
+          </select>
+        </div>
+        <ul id="results" class="divide-y"><li class="py-4 text-sm text-slate-500">No results yet. Search for a place to begin.</li></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="text-center text-xs text-slate-500 py-6">
+    Data © OpenStreetMap contributors (ODbL). Search by Nominatim, places and routes by Overpass API.
+  </footer>
+
+  <!-- JSON data (parsed in JS) -->
+  <script id="categoriesData" type="application/json">
+  [
+    { "id": "pharmacy", "label": "Pharmacy", "key": "amenity", "value": "pharmacy" },
+    { "id": "atm", "label": "ATM", "key": "amenity", "value": "atm" },
+    { "id": "hospital", "label": "Hospital", "key": "amenity", "value": "hospital" },
+    { "id": "clinic", "label": "Clinic / Doctor", "key": "amenity", "value": "clinic" },
+    { "id": "cafe", "label": "Cafe", "key": "amenity", "value": "cafe" },
+    { "id": "restaurant", "label": "Restaurant", "key": "amenity", "value": "restaurant" },
+    { "id": "toilets", "label": "Public toilets", "key": "amenity", "value": "toilets" },
+    { "id": "drinking_water", "label": "Drinking water", "key": "amenity", "value": "drinking_water" },
+    { "id": "supermarket", "label": "Supermarket", "key": "shop", "value": "supermarket" },
+    { "id": "bus_stop", "label": "Bus stop", "key": "highway", "value": "bus_stop" },
+    { "id": "library", "label": "Library", "key": "amenity", "value": "library" }
+  ]
+  </script>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const OVERPASS = "https://overpass-api.de/api/interpreter";
+const ROUTE_RE = "^(bus|trolleybus|tram|subway|light_rail|train)$";
+const STOP_RE = "^(bus_stop|platform|stop_position|station|tram_stop|halt)$";
+
+let categories = [], origin = null, places = [], saved = [];
+let jOptions = [], jO = null, jD = null;
+
+/* ---------- Map ---------- */
+const map = L.map("map").setView([12.9716, 77.5946], 12);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap contributors",
+}).addTo(map);
+const markerLayer = L.layerGroup().addTo(map);
+
+/* ---------- Helpers ---------- */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`);
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function setStatus(msg, type = "info") {          // type: info | error | loading | success
+  const el = $("status");
+  const color = { info: "text-slate-600", error: "text-red-600", loading: "text-indigo-700", success: "text-indigo-700" }[type];
+  el.className = "text-sm " + color;
+  el.innerHTML = (type === "loading" ? '<span class="spinner"></span>' : "") + escapeHtml(msg);
+}
+
+function setBusy(btn, busy, idleText, busyText) {
+  btn.disabled = busy;
+  btn.textContent = busy ? busyText : idleText;
+}
+
+function showError(inputEl, errEl, show) {
+  inputEl.classList.toggle("invalid", show);
+  errEl.classList.toggle("hidden", !show);
+}
+
+/* A fetch wrapper with a timeout and clear error messages */
+async function safeFetch(url, options = {}, label = "service", timeoutMs = 30000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    if (res.status === 429) throw new Error(`The ${label} is rate-limiting requests. Wait a few seconds and retry.`);
+    if (!res.ok) throw new Error(`The ${label} returned an error (${res.status}). Try again shortly.`);
+    return await res.json();
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error(`The ${label} took too long to respond.`);
+    if (err instanceof TypeError) throw new Error("Network problem. Check your internet connection.");
+    throw err;
+  } finally { clearTimeout(timer); }
+}
+
+/* ---------- JSON data handling ---------- */
+function loadCategories() {
+  try {
+    categories = JSON.parse($("categoriesData").textContent);
+    $("category").innerHTML = categories.map((c) => `<option value="${c.id}">${escapeHtml(c.label)}</option>`).join("");
+  } catch {
+    setStatus("Could not read the category list.", "error");
+  }
+}
+
+function loadSaved() {
+  try { saved = JSON.parse(localStorage.getItem("nearbynow_saved") || "[]"); } catch { saved = []; }
+  renderSaved();
+}
+function persistSaved() {
+  try { localStorage.setItem("nearbynow_saved", JSON.stringify(saved)); }
+  catch { setStatus("Could not save (browser storage unavailable).", "error"); }
+  renderSaved();
+}
+function renderSaved() {
+  $("savedEmpty").classList.toggle("hidden", saved.length > 0);
+  $("savedList").innerHTML = saved.map((s, i) => `
+    <li class="flex justify-between gap-2">
+      <button data-goto="${i}" class="text-left text-indigo-700 hover:underline">${escapeHtml(s.name)} <span class="text-slate-500">(${escapeHtml(s.type)})</span></button>
+      <button data-remove="${i}" class="text-red-500" aria-label="Remove saved place">✕</button>
+    </li>`).join("");
+}
+
+/* ---------- Fetch API: geocoding ---------- */
+async function geocode(query) {
+  const data = await safeFetch(`${NOMINATIM}?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, { headers: { Accept: "application/json" } }, "search service");
+  if (!Array.isArray(data) || !data.length) throw new Error(`No location found for "${query}". Try adding the city name.`);
+  return { lat: +data[0].lat, lon: +data[0].lon, label: data[0].display_name };
+}
+
+// Tries several public Overpass servers in turn, because any one of them can be overloaded.
+const OVERPASS_MIRRORS = [
+  OVERPASS,
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.openstreetmap.fr/api/interpreter",
+  "https://z.overpass-api.de/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
+];
+async function overpass(query) {
+  let lastErr;
+  for (const url of OVERPASS_MIRRORS) {
+    try {
+      console.log("Overpass: trying", url);
+      const json = await safeFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: "data=" + encodeURIComponent(query),
+      }, "map data service", 12000);
+      if (json.remark && !(json.elements || []).length && /error|timed out|out of memory/i.test(json.remark)) {
+        throw new Error("Server said: " + json.remark);
+      }
+      console.log("Overpass: got", (json.elements || []).length, "elements from", url);
+      return json;
+    } catch (err) {
+      console.warn("Overpass failed on", url, err.message);
+      lastErr = err;
+    }
+  }
+  throw new Error((lastErr && lastErr.message) + " (all map servers were tried)");
+}
+
+/* ================= NEARBY MODE ================= */
+// Fallback that only uses Nominatim (the search service), in case Overpass is unreachable.
+async function fetchNearbyViaNominatim(cat, radius) {
+  const { lat, lon } = origin;
+  const dLat = radius / 111000, dLon = radius / (111000 * Math.cos((lat * Math.PI) / 180));
+  const viewbox = `${lon - dLon},${lat + dLat},${lon + dLon},${lat - dLat}`;
+  const term = cat.value.replace(/_/g, " ");
+  const data = await safeFetch(
+    `${NOMINATIM}?format=jsonv2&limit=40&bounded=1&extratags=1&viewbox=${viewbox}&q=${encodeURIComponent(term)}`,
+    { headers: { Accept: "application/json" } }, "search service");
+  return (Array.isArray(data) ? data : []).map((el) => {
+    const t = el.extratags || {}, plat = +el.lat, plon = +el.lon;
+    return {
+      id: el.osm_type + el.osm_id, name: el.name || `Unnamed ${cat.label.toLowerCase()}`, type: cat.label,
+      lat: plat, lon: plon, dist: haversine(lat, lon, plat, plon),
+      hours: t.opening_hours || null, wheelchair: t.wheelchair || null,
+      phone: t.phone || t["contact:phone"] || null, osm: `https://www.openstreetmap.org/${el.osm_type}/${el.osm_id}`,
+    };
+  }).filter((p) => p.dist <= radius);
+}
+
+async function fetchNearby(cat, radius) {
+  try {
+    return await fetchNearbyOverpass(cat, radius);
+  } catch (err) {
+    console.warn("Overpass unavailable, using Nominatim fallback:", err.message);
+    setStatus("Detailed map servers are unreachable. Using basic search instead…", "loading");
+    return await fetchNearbyViaNominatim(cat, radius);
+  }
+}
+
+async function fetchNearbyOverpass(cat, radius) {
+  const { lat, lon } = origin;
+  const f = `["${cat.key}"="${cat.value}"]`;
+  const json = await overpass(`[out:json][timeout:25];(node${f}(around:${radius},${lat},${lon});way${f}(around:${radius},${lat},${lon}););out center 100;`);
+  return (json.elements || []).map((el) => {
+    const plat = el.lat ?? el.center?.lat, plon = el.lon ?? el.center?.lon, t = el.tags || {};
+    return {
+      id: el.type + el.id, name: t.name || `Unnamed ${cat.label.toLowerCase()}`, type: cat.label,
+      lat: plat, lon: plon, dist: haversine(lat, lon, plat, plon),
+      hours: t.opening_hours || null, wheelchair: t.wheelchair || null,
+      phone: t.phone || t["contact:phone"] || null, osm: `https://www.openstreetmap.org/${el.type}/${el.id}`,
+    };
+  }).filter((p) => p.lat && p.lon);
+}
+
+function visiblePlaces() {
+  let list = places.slice();
+  if ($("wheelchairOnly").checked) list = list.filter((p) => p.wheelchair === "yes");
+  if ($("openInfoOnly").checked) list = list.filter((p) => p.hours);
+  list.sort($("sortBy").value === "name" ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.dist - b.dist);
+  return list;
+}
+
+function renderNearby() {
+  const list = visiblePlaces();
+  markerLayer.clearLayers();
+  if (origin) L.circleMarker([origin.lat, origin.lon], { radius: 8, color: "#4f46e5", fillOpacity: 0.9 }).addTo(markerLayer).bindPopup("Search centre");
+  $("count").textContent = places.length ? `(${list.length} of ${places.length})` : "";
+  if (!list.length) {
+    $("results").innerHTML = `<li class="py-4 text-sm text-slate-500">${places.length ? "No results match your filters. Untick a filter to see more." : "No results yet. Search for a place to begin."}</li>`;
+    return;
+  }
+  $("results").innerHTML = list.map((p) => `
+    <li class="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div>
+        <p class="font-medium">${escapeHtml(p.name)} <span class="text-xs text-slate-500">· ${fmtDist(p.dist)}</span></p>
+        <p class="text-xs text-slate-600">
+          ${p.hours ? "🕒 " + escapeHtml(p.hours) : "🕒 hours not listed"} ·
+          ${p.wheelchair === "yes" ? "♿ accessible" : p.wheelchair ? "♿ " + escapeHtml(p.wheelchair) : "♿ not tagged"}
+          ${p.phone ? " · 📞 " + escapeHtml(p.phone) : ""}
+        </p>
+      </div>
+      <div class="flex gap-2 text-sm">
+        <button data-focus="${p.id}" class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Show on map</button>
+        <button data-save="${p.id}" class="px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200">Save</button>
+        <a href="${p.osm}" target="_blank" rel="noopener" class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">OSM</a>
+      </div>
+    </li>`).join("");
+  const pts = [[origin.lat, origin.lon]];
+  list.forEach((p) => {
+    L.marker([p.lat, p.lon]).addTo(markerLayer).bindPopup(`<b>${escapeHtml(p.name)}</b><br>${fmtDist(p.dist)}`);
+    pts.push([p.lat, p.lon]);
+  });
+  map.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
+}
+
+/* ================= JOURNEY MODE ================= */
+async function fetchTransit(pt, r) {
+  const json = await overpass(`[out:json][timeout:40];
+node(around:${r},${pt.lat},${pt.lon})[~"^(highway|public_transport|railway)$"~"${STOP_RE}"]->.s;
+rel(bn.s)[route~"${ROUTE_RE}"];
+(._;.s;);out body;`);
+  const nodes = new Map(), rels = [];
+  (json.elements || []).forEach((el) => {
+    if (el.type === "node") nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, name: el.tags?.name || "Unnamed stop" });
+    else if (el.type === "relation") rels.push({ id: el.id, tags: el.tags || {}, members: el.members || [] });
+  });
+  return { nodes, rels };
+}
+
+function matchRoutes(o, d, A, B) {
+  const relsD = new Map(B.rels.map((r) => [r.id, r]));
+  const options = [];
+  for (const rel of A.rels) {
+    if (!relsD.has(rel.id)) continue;
+    let seq = rel.members.filter((m) => m.type === "node" && /platform/.test(m.role));
+    if (seq.length < 2) seq = rel.members.filter((m) => m.type === "node" && /stop|platform/.test(m.role));
+    if (seq.length < 2) seq = rel.members.filter((m) => m.type === "node");
+    let best = null;
+    seq.forEach((m1, i) => {
+      const a = A.nodes.get(m1.ref); if (!a) return;
+      seq.forEach((m2, j) => {
+        if (j <= i) return;                                   // travel forward along the route
+        const b = B.nodes.get(m2.ref); if (!b) return;
+        const walk = haversine(o.lat, o.lon, a.lat, a.lon) + haversine(b.lat, b.lon, d.lat, d.lon);
+        if (!best || walk < best.walk) best = { a, b, walk, stops: j - i };
+      });
+    });
+    if (best) options.push({ rel, ...best });
+  }
+  return options.sort((x, y) => x.walk - y.walk).slice(0, 10);
+}
+
+function drawJourney(opt) {
+  markerLayer.clearLayers();
+  const pts = [];
+  const add = (p, label, color) => {
+    L.circleMarker([p.lat, p.lon], { radius: 8, color, fillOpacity: 0.9 }).addTo(markerLayer).bindPopup(label);
+    pts.push([p.lat, p.lon]);
+  };
+  add(jO, "Start", "#4f46e5");
+  add(jD, "Destination", "#dc2626");
+  if (opt) {
+    add(opt.a, "Board: " + escapeHtml(opt.a.name), "#2563eb");
+    add(opt.b, "Alight: " + escapeHtml(opt.b.name), "#7c3aed");
+    L.polyline([[jO.lat, jO.lon], [opt.a.lat, opt.a.lon]], { dashArray: "4 6", color: "#475569" }).addTo(markerLayer);
+    L.polyline([[opt.a.lat, opt.a.lon], [opt.b.lat, opt.b.lon]], { color: "#2563eb", weight: 4 }).addTo(markerLayer);
+    L.polyline([[opt.b.lat, opt.b.lon], [jD.lat, jD.lon]], { dashArray: "4 6", color: "#475569" }).addTo(markerLayer);
+  }
+  map.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
+}
+
+function renderJourney() {
+  $("jCount").textContent = jOptions.length ? `(${jOptions.length})` : "";
+  if (!jOptions.length) {
+    $("jResults").innerHTML = `<li class="py-4 text-sm text-slate-500">No direct route found. Try a larger walking distance. OSM transit data may be incomplete here, and transfers are not supported.</li>`;
+    return;
+  }
+  $("jResults").innerHTML = jOptions.map((o, i) => {
+    const t = o.rel.tags;
+    const w1 = Math.max(1, Math.round((haversine(jO.lat, jO.lon, o.a.lat, o.a.lon) / 1000) * 12));
+    const w2 = Math.max(1, Math.round((haversine(o.b.lat, o.b.lon, jD.lat, jD.lon) / 1000) * 12));
+    return `<li class="py-3 space-y-1">
+      <p class="font-medium"><span class="inline-block bg-violet-600 text-white text-xs rounded px-2 py-0.5 mr-1">${escapeHtml(t.ref || t.route)}</span>${escapeHtml(t.name || `${t.from || "?"} → ${t.to || "?"}`)}</p>
+      <p class="text-sm text-slate-600">🚶 ~${w1} min to <b>${escapeHtml(o.a.name)}</b> → 🚌 ~${o.stops} stop(s) → get off at <b>${escapeHtml(o.b.name)}</b> → 🚶 ~${w2} min</p>
+      <p class="text-xs text-slate-500">${t.operator ? "Operator: " + escapeHtml(t.operator) + " · " : ""}Walking is straight-line at ~5 km/h. No live timings.</p>
+      <button data-jshow="${i}" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Show on map</button>
+    </li>`;
+  }).join("");
+}
+
+/* ================= EVENTS ================= */
+// 1. Tab switching (click)
+function setMode(mode) {
+  const journey = mode === "journey";
+  ["searchForm", "nearbyCard"].forEach((id) => $(id).classList.toggle("hidden", journey));
+  ["journeyForm", "journeyCard"].forEach((id) => $(id).classList.toggle("hidden", !journey));
+  $("tabJourney").className = "flex-1 py-2 " + (journey ? "bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white" : "bg-white text-indigo-700");
+  $("tabNearby").className = "flex-1 py-2 " + (journey ? "bg-white text-indigo-700" : "bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white");
+  setStatus("");
+}
+$("tabNearby").addEventListener("click", () => setMode("nearby"));
+$("tabJourney").addEventListener("click", () => setMode("journey"));
+
+// 2. Live slider label (input) + live validation feedback while typing
+$("radius").addEventListener("input", (e) => ($("radiusLabel").textContent = e.target.value));
+$("place").addEventListener("input", () => { if ($("place").value.trim().length >= 3) showError($("place"), $("placeError"), false); });
+$("jFrom").addEventListener("input", () => { if ($("jFrom").value.trim().length >= 3) showError($("jFrom"), $("jFromError"), false); });
+$("jTo").addEventListener("input", () => { if ($("jTo").value.trim().length >= 3) { showError($("jTo"), $("jToError"), false); $("jSameError").classList.add("hidden"); } });
+
+// 3. Filters and sorting (change) re-render without refetching
+["wheelchairOnly", "openInfoOnly", "sortBy"].forEach((id) => $(id).addEventListener("change", renderNearby));
+
+// 4. Nearby form submit (with validation, loading state, error handling)
+$("searchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("place").value.trim();
+  const reuse = origin && origin.typed === q;
+  if (!reuse && q.length < 3) { showError($("place"), $("placeError"), true); $("place").focus(); return; }
+  showError($("place"), $("placeError"), false);
+  const cat = categories.find((c) => c.id === $("category").value);
+  if (!cat) { setStatus("Please choose a category.", "error"); return; }
+  setBusy($("searchBtn"), true, "Find nearby", "Searching…");
+  $("results").innerHTML = `<li class="py-4 text-sm text-slate-500"><span class="spinner"></span>Loading results…</li>`;
+  try {
+    if (!reuse) { setStatus("Finding location…", "loading"); origin = { ...(await geocode(q)), typed: q }; }
+    setStatus(`Searching for ${cat.label.toLowerCase()} nearby…`, "loading");
+    places = await fetchNearby(cat, +$("radius").value);
+    setStatus(places.length ? `Found ${places.length} result(s).` : "Nothing found in this radius. Try increasing it.", places.length ? "success" : "info");
+    renderNearby();
+  } catch (err) {
+    places = [];
+    $("results").innerHTML = `<li class="py-4 text-sm text-red-600">Could not load results.</li>`;
+    setStatus(err.message || "Something went wrong.", "error");
+  } finally { setBusy($("searchBtn"), false, "Find nearby", "Searching…"); }
+});
+
+// 5. Geolocation button (click)
+$("locateBtn").addEventListener("click", () => {
+  if (!navigator.geolocation) return setStatus("Geolocation is not supported in this browser.", "error");
+  setStatus("Getting your location…", "loading");
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      origin = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Your location", typed: "Your location" };
+      $("place").value = "Your location";
+      showError($("place"), $("placeError"), false);
+      setStatus("Location set. Choose a category and press Find nearby.", "success");
+      map.setView([origin.lat, origin.lon], 15);
+    },
+    () => setStatus("Location permission denied. Type a place instead.", "error"),
+    { timeout: 10000 }
+  );
+});
+
+// 6. Result actions via event delegation (click)
+$("results").addEventListener("click", (e) => {
+  const focusId = e.target.dataset.focus, saveId = e.target.dataset.save;
+  if (focusId) { const p = places.find((x) => x.id === focusId); if (p) map.setView([p.lat, p.lon], 18); }
+  if (saveId) {
+    const p = places.find((x) => x.id === saveId);
+    if (!p) return;
+    if (saved.some((s) => s.id === p.id)) return setStatus(`"${p.name}" is already saved.`);
+    saved.push(p); persistSaved(); setStatus(`Saved "${p.name}".`, "success");
+  }
+});
+
+$("savedList").addEventListener("click", (e) => {
+  if (e.target.dataset.remove !== undefined) { saved.splice(+e.target.dataset.remove, 1); persistSaved(); return; }
+  const g = e.target.closest("[data-goto]");
+  if (g) { const s = saved[+g.dataset.goto]; map.setView([s.lat, s.lon], 18); L.marker([s.lat, s.lon]).addTo(map).bindPopup(escapeHtml(s.name)).openPopup(); }
+});
+
+$("jResults").addEventListener("click", (e) => {
+  if (e.target.dataset.jshow !== undefined) drawJourney(jOptions[+e.target.dataset.jshow]);
+});
+
+// 7. Journey form submit (validation, loading, errors, empty state)
+$("journeyForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const from = $("jFrom").value.trim(), to = $("jTo").value.trim();
+  const badFrom = from.length < 3, badTo = to.length < 3;
+  const same = !badFrom && !badTo && from.toLowerCase() === to.toLowerCase();
+  showError($("jFrom"), $("jFromError"), badFrom);
+  showError($("jTo"), $("jToError"), badTo);
+  $("jSameError").classList.toggle("hidden", !same);
+  if (same) $("jTo").classList.add("invalid");
+  if (badFrom || badTo || same) return;
+
+  setBusy($("journeyBtn"), true, "Find public transport", "Searching…");
+  $("jResults").innerHTML = `<li class="py-4 text-sm text-slate-500"><span class="spinner"></span>Looking for routes…</li>`;
+  try {
+    setStatus("Finding your start and destination…", "loading");
+    jO = await geocode(from);
+    await sleep(1100);                                        // respect Nominatim's 1 request/second rule
+    jD = await geocode(to);
+    const r = +$("jWalk").value;
+    setStatus("Looking up stops and routes near the start…", "loading");
+    const A = await fetchTransit(jO, r);
+    setStatus("Looking up stops and routes near the destination…", "loading");
+    const B = await fetchTransit(jD, r);
+    jOptions = matchRoutes(jO, jD, A, B);
+    const diag = `Near start: ${A.nodes.size} stops, ${A.rels.length} routes. Near destination: ${B.nodes.size} stops, ${B.rels.length} routes.`;
+    console.log("Journey diagnostics:", diag, { from: jO, to: jD });
+    setStatus(jOptions.length ? `Found ${jOptions.length} direct option(s). ${diag}` : `No direct route found. ${diag}`, jOptions.length ? "success" : "info");
+    renderJourney();
+    drawJourney(jOptions[0]);
+  } catch (err) {
+    jOptions = [];
+    $("jResults").innerHTML = `<li class="py-4 text-sm text-red-600">Could not load routes.</li>`;
+    setStatus(err.message || "Something went wrong.", "error");
+  } finally { setBusy($("journeyBtn"), false, "Find public transport", "Searching…"); }
+});
+
+// 8. Keyboard shortcut: Escape clears the active form's inputs
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  ["place", "jFrom", "jTo"].forEach((id) => { $(id).value = ""; $(id).classList.remove("invalid"); });
+  ["placeError", "jFromError", "jToError", "jSameError"].forEach((id) => $(id).classList.add("hidden"));
+  setStatus("Cleared.");
+});
+
+loadCategories();
+loadSaved();
+</script>
+</body>
+</html>
